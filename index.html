@@ -43,43 +43,81 @@
         </div>
         <div class="controls">
           <label>
-            Metric
+            指標
             <select id="metric-select"></select>
+          </label>
+          <label>
+            表示単位
+            <select id="rating-range"></select>
+          </label>
+          <label>
+            絞り込み
+            <select id="rating-filter"></select>
           </label>
         </div>
       </div>
       <div class="stats-grid" id="rating-stats"></div>
-      <div class="chart-card">
-        <canvas id="rating-chart"></canvas>
+      <div class="chart-scroll">
+        <div class="chart-card chart-inner" id="rating-inner">
+          <canvas id="rating-chart"></canvas>
+        </div>
       </div>
     </section>
 
-    <section class="grid-2">
-      <section class="card">
-        <div class="section-head">
-          <div>
-            <h2>Sleep Duration</h2>
-            <p class="sub">入眠時間と起床時間から算出した睡眠時間</p>
-          </div>
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <h2>Sleep Duration</h2>
+          <p class="sub">入眠時間と起床時間から算出した睡眠時間</p>
         </div>
-        <div class="stats-grid" id="sleep-stats"></div>
-        <div class="chart-card">
+        <div class="controls">
+          <label>
+            表示単位
+            <select id="sleep-range"></select>
+          </label>
+          <label>
+            絞り込み
+            <select id="sleep-filter"></select>
+          </label>
+        </div>
+      </div>
+      <div class="stats-grid" id="sleep-stats"></div>
+      <div class="chart-scroll">
+        <div class="chart-card chart-inner" id="sleep-inner">
           <canvas id="sleep-chart"></canvas>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <section class="card">
-        <div class="section-head">
-          <div>
-            <h2>Weekly Activity</h2>
-            <p class="sub">ジム、外食、人と会う用事などの週次カウント</p>
-          </div>
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <h2>Activity Calendar</h2>
+          <p class="sub">選択したアクティビティがあった日をカレンダーで表示</p>
         </div>
-        <div class="stats-grid" id="activity-stats"></div>
-        <div class="chart-card">
-          <canvas id="activity-chart"></canvas>
+          <div class="controls">
+            <label>
+              アクティビティ
+              <select id="activity-select"></select>
+            </label>
+            <label>
+              モード
+              <select id="activity-mode"></select>
+            </label>
+            <label>
+              月
+              <div class="month-controls">
+                <button class="icon-btn" id="activity-prev" type="button"><<</button>
+                <select id="activity-month"></select>
+              <button class="icon-btn" id="activity-next" type="button">>></button>
+            </div>
+          </label>
         </div>
-      </section>
+      </div>
+      <div class="stats-grid" id="activity-stats"></div>
+      <div class="legend" id="activity-legend"></div>
+      <div class="calendar" id="activity-calendar"></div>
+      <div class="detail-card" id="day-details">日付を選択すると詳細が表示されます。</div>
     </section>
 
     <section class="card">
