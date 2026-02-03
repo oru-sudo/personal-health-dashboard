@@ -1,4 +1,11 @@
 const CSV_URL = "https://docs.google.com/spreadsheets/d/12eDhJWiqfLILLiOJjaYDXZtvxj6lUnzqQJo-3cWK_oU/export?format=csv&gid=712410912";
+const COMPOSITION_URL =
+  "https://docs.google.com/spreadsheets/d/12eDhJWiqfLILLiOJjaYDXZtvxj6lUnzqQJo-3cWK_oU/gviz/tq?tqx=out:csv&sheet=%E3%83%95%E3%82%A9%E3%83%BC%E3%83%A0%E3%81%AE%E5%9B%9E%E7%AD%94%202";
+const OMRON_GAS_URL =
+  "https://script.google.com/macros/s/AKfycbx0NMxSb0tehOkARuwOCuFtLWXlgxw0C0l-5JZUoSrgtE4nYIl86iE9DzEnwUq8K549/exec";
+const OMRON_GAS_TOKEN = "token";
+const OMRON_POINT_WIDTH = 36;
+const USER_HEIGHT_CM = 180;
 const MA_WINDOW = 7;
 
 const METRICS = [
@@ -16,6 +23,46 @@ const ACTIVITIES = [
   { key: "人と会う用事", label: "人と会う用事", yes: ["あった"], no: ["なかった"], color: "#1a7f5a" },
   { key: "体組成計測定", label: "体組成計測定", yes: ["した"], no: ["してない"], color: "#f59e0b" },
   { key: "睡眠薬", label: "睡眠薬", yes: ["あり"], no: ["なし"], color: "#b91c1c" }
+];
+
+const BODY_METRICS = [
+  {
+    key: "fat_rate",
+    label: "体脂肪率",
+    unit: "%",
+    parts: [
+      { key: "【体脂肪率】体幹部", label: "体幹部", position: "core" },
+      { key: "【体脂肪率】左腕", label: "左腕", position: "left-arm" },
+      { key: "【体脂肪率】右腕", label: "右腕", position: "right-arm" },
+      { key: "【体脂肪率】左脚", label: "左脚", position: "left-leg" },
+      { key: "【体脂肪率】右脚", label: "右脚", position: "right-leg" }
+    ]
+  },
+  {
+    key: "muscle_mass",
+    label: "筋肉量",
+    unit: "kg",
+    parts: [
+      { key: "【筋肉量】体幹部", label: "体幹部", position: "core" },
+      { key: "【筋肉量】左腕", label: "左腕", position: "left-arm" },
+      { key: "【筋肉量】右腕", label: "右腕", position: "right-arm" },
+      { key: "【筋肉量】左脚", label: "左脚", position: "left-leg" },
+      { key: "【筋肉量】右脚", label: "右脚", position: "right-leg" }
+    ]
+  }
+];
+
+const BODY_TREND_METRICS = [
+  { key: "weight", label: "体重", unit: "kg" },
+  { key: "fat_mass", label: "体脂肪量", unit: "kg" },
+  { key: "fat_rate", label: "体脂肪率", unit: "%" },
+  { key: "muscle", label: "筋肉量", unit: "kg" },
+  { key: "water", label: "体水分量", unit: "kg" },
+  { key: "bone", label: "推定骨量", unit: "kg" },
+  { key: "bmr", label: "基礎代謝量", unit: "kcal" },
+  { key: "visceral", label: "内臓脂肪レベル", unit: "" },
+  { key: "athlete", label: "アスリート指数", unit: "" },
+  { key: "bmi", label: "BMI", unit: "" }
 ];
 
 const RANGE_CONFIG = {
@@ -61,6 +108,10 @@ let ratingChart;
 let sleepChart;
 let activityChart;
 let symptomChart;
+let omronTempChart;
+let omronSpo2Chart;
+let omronBpChart;
+let omronWeightChart;
 let currentData = null;
 let currentMetricKey = METRICS[0].key;
 let ratingRangeKey = "day";
@@ -70,22 +121,43 @@ let sleepFilterKey = "all";
 let currentActivityKey = ACTIVITIES[0].key;
 let currentActivityMonth = null;
 let activityMode = "single";
+let bodyMetricKey = "fat_rate";
+let bodyRecordIndex = null;
+let bodyTrendMetricKey = "weight";
+let bodyTrendRangeKey = "day";
+let bodyTrendFilterKey = "all";
+let bodyTrendChart;
 let selectorsInitialized = false;
+let loadVersion = 0;
 
 document.addEventListener("DOMContentLoaded", () => {
-  const refreshButton = document.getElementById("refresh-button");
-  if (refreshButton) {
-    refreshButton.addEventListener("click", () => loadAndRender());
-  }
+  const refreshButtons = document.querySelectorAll("[data-refresh]");
+  refreshButtons.forEach((button) => {
+    button.addEventListener("click", () => loadAndRender(button));
+  });
   loadAndRender();
 });
 
-async function loadAndRender() {
-  setLoadingState(true);
+async function loadAndRender(triggerButton = null) {
+  loadVersion += 1;
+  const currentVersion = loadVersion;
+  setLoadingState(true, triggerButton);
   setStatus("Loading data...");
   try {
-    const rawRows = await fetchCsvRows();
-    const data = prepareData(rawRows);
+    const [mainResult, compositionResult] = await Promise.allSettled([
+      fetchCsvRows(CSV_URL),
+      fetchCsvRows(COMPOSITION_URL)
+    ]);
+    if (mainResult.status !== "fulfilled") {
+      throw mainResult.reason;
+    }
+    const data = prepareData(mainResult.value);
+    if (compositionResult.status === "fulfilled") {
+      data.bodyComposition = prepareBodyComposition(compositionResult.value);
+    } else {
+      console.warn("Body composition fetch failed", compositionResult.reason);
+      data.bodyComposition = null;
+    }
     currentData = data;
     initSelectors(data);
     renderAll(data);
@@ -96,10 +168,15 @@ async function loadAndRender() {
   } finally {
     setLoadingState(false);
   }
+
+  setOmronLoading(true);
+  fetchOmronDataWithTimeout(8000)
+    .then((omron) => finalizeOmronFetch(currentVersion, omron, null))
+    .catch((error) => finalizeOmronFetch(currentVersion, null, error));
 }
 
-async function fetchCsvRows() {
-  const url = `${CSV_URL}${CSV_URL.includes("?") ? "&" : "?"}t=${Date.now()}`;
+async function fetchCsvRows(sourceUrl) {
+  const url = `${sourceUrl}${sourceUrl.includes("?") ? "&" : "?"}t=${Date.now()}`;
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`Failed to fetch CSV: ${response.status}`);
@@ -111,6 +188,65 @@ async function fetchCsvRows() {
     console.warn("CSV parse warnings", parsed.errors);
   }
   return parsed.data;
+}
+
+async function fetchOmronData() {
+  const keys = ["bodyTemperature", "spo2", "bloodPressure", "bodyComposition"];
+  const urls = {
+    bodyTemperature: buildOmronGasUrl("bodyTemperature"),
+    spo2: buildOmronGasUrl("spo2"),
+    bloodPressure: buildOmronGasUrl("bloodPressure"),
+    bodyComposition: buildOmronGasUrl("bodyComposition")
+  };
+
+  const requests = keys.map((key) => {
+    const url = urls[key];
+    if (!url) return Promise.resolve(null);
+    return fetchCsvRows(url);
+  });
+
+  const results = await Promise.allSettled(requests);
+  const rows = {};
+  results.forEach((result, index) => {
+    const key = keys[index];
+    if (result.status === "fulfilled") {
+      rows[key] = result.value;
+    } else {
+      console.warn(`OMRON fetch failed: ${key}`, result.reason);
+      rows[key] = null;
+    }
+  });
+
+  return prepareOmronData(rows);
+}
+
+function buildOmronGasUrl(type) {
+  const params = new URLSearchParams({ type, token: OMRON_GAS_TOKEN });
+  return `${OMRON_GAS_URL}?${params.toString()}`;
+}
+
+function fetchOmronDataWithTimeout(timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      reject(new Error("OMRON fetch timeout"));
+    }, timeoutMs);
+    fetchOmronData()
+      .then((data) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve(data);
+      })
+      .catch((error) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
 }
 
 function prepareData(rawRows) {
@@ -162,6 +298,70 @@ function prepareData(rawRows) {
   };
 }
 
+function prepareOmronData(rows) {
+  if (!rows) return null;
+  const temperature = prepareOmronSeries(rows.bodyTemperature, "体温(℃)");
+  const spo2 = prepareOmronSeries(rows.spo2, "酸素飽和度(%)");
+  const weight = prepareOmronSeries(rows.bodyComposition, "体重(kg)");
+  const bloodPressure = prepareOmronBloodPressure(rows.bloodPressure);
+
+  if (!temperature && !spo2 && !weight && !bloodPressure) return null;
+  return {
+    temperature,
+    spo2,
+    weight,
+    bloodPressure
+  };
+}
+
+function prepareOmronSeries(rawRows, valueKey) {
+  if (!rawRows?.length) return null;
+  const records = rawRows
+    .map((row) => cleanRow(row))
+    .filter((row) => row["測定日"])
+    .map((row) => ({ ...row, _ts: parseTimestamp(row["測定日"]) }))
+    .filter((row) => row._ts)
+    .sort((a, b) => a._ts - b._ts);
+
+  if (!records.length) return null;
+  return { records, valueKey };
+}
+
+function prepareOmronBloodPressure(rawRows) {
+  if (!rawRows?.length) return null;
+  const records = rawRows
+    .map((row) => cleanRow(row))
+    .filter((row) => row["測定日"])
+    .map((row) => ({ ...row, _ts: parseTimestamp(row["測定日"]) }))
+    .filter((row) => row._ts)
+    .sort((a, b) => a._ts - b._ts);
+  if (!records.length) return null;
+  return { records };
+}
+
+function prepareBodyComposition(rawRows) {
+  const rows = rawRows.map((row) => cleanRow(row)).filter((row) => row["タイムスタンプ"]);
+  const records = rows
+    .map((row) => {
+      const measured = parseDateOnly(row["測定実施日"]);
+      const timestamp = parseTimestamp(row["タイムスタンプ"]);
+      return {
+        ...row,
+        _measured: measured || timestamp,
+        _timestamp: timestamp,
+        _ts: measured || timestamp
+      };
+    })
+    .filter((row) => row._measured)
+    .sort((a, b) => a._measured - b._measured);
+
+  if (!records.length) return null;
+
+  return {
+    records
+  };
+}
+
 function cleanRow(row) {
   const cleaned = {};
   Object.entries(row).forEach(([key, value]) => {
@@ -187,6 +387,14 @@ function parseTimestamp(value) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+function parseDateOnly(value) {
+  if (!value) return null;
+  const [year, month, day] = String(value).split("/").map((item) => Number(item));
+  if (!year || !month || !day) return null;
+  const date = new Date(year, month - 1, day);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 function formatDate(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -201,6 +409,11 @@ function formatDateTime(date) {
   return `${datePart} ${hours}:${minutes}`;
 }
 
+function formatDateSafe(date) {
+  if (!date) return "-";
+  return formatDate(date);
+}
+
 function formatMonth(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -211,6 +424,21 @@ function toNumber(value) {
   if (value === null || value === undefined || value === "") return null;
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
+}
+
+function computeDelta(currentValue, previousValue) {
+  if (!Number.isFinite(currentValue) || !Number.isFinite(previousValue) || previousValue === 0) {
+    return null;
+  }
+  const diff = previousValue - currentValue;
+  const pct = Math.abs((diff / previousValue) * 100);
+  if (diff > 0) {
+    return { direction: "down", value: pct };
+  }
+  if (diff < 0) {
+    return { direction: "up", value: pct };
+  }
+  return { direction: "flat", value: 0 };
 }
 
 function aggregateByRange(records, values, rangeKey) {
@@ -532,17 +760,211 @@ function computeSymptoms(records) {
 
 function renderHeader(data) {
   const { records, dailyRecords } = data;
-  const countEl = document.getElementById("record-count");
-  const rangeEl = document.getElementById("date-range");
-  const lastEl = document.getElementById("last-entry");
+  const countEl = document.getElementById("record-count-1");
+  const rangeEl = document.getElementById("date-range-1");
+  const lastEl = document.getElementById("last-entry-1");
 
-  countEl.textContent = records.length.toString();
-  if (dailyRecords.length) {
+  if (countEl) countEl.textContent = records.length.toString();
+  if (dailyRecords.length && rangeEl && lastEl) {
     const start = dailyRecords[0]._ts;
     const end = dailyRecords[dailyRecords.length - 1]._ts;
     rangeEl.textContent = `${formatDate(start)} → ${formatDate(end)}`;
     lastEl.textContent = formatDateTime(end);
   }
+
+  const countEl2 = document.getElementById("record-count-2");
+  const rangeEl2 = document.getElementById("date-range-2");
+  const lastEl2 = document.getElementById("last-entry-2");
+  const bodyRecords = data.bodyComposition?.records || [];
+
+  if (countEl2) countEl2.textContent = bodyRecords.length.toString();
+  if (bodyRecords.length && rangeEl2 && lastEl2) {
+    const start = bodyRecords[0]._measured;
+    const end = bodyRecords[bodyRecords.length - 1]._measured;
+    rangeEl2.textContent = `${formatDateSafe(start)} → ${formatDateSafe(end)}`;
+    lastEl2.textContent = formatDateSafe(end);
+  }
+}
+
+function renderOmronSection(omron) {
+  omronTempChart = renderOmronLineChart(
+    omron?.temperature,
+    {
+      canvasId: "omron-temp-chart",
+      innerId: "omron-temp-inner",
+      label: "体温",
+      unit: "℃",
+      color: "#e0572c",
+      suggestedMin: 35,
+      suggestedMax: 39
+    },
+    omronTempChart
+  );
+
+  omronSpo2Chart = renderOmronLineChart(
+    omron?.spo2,
+    {
+      canvasId: "omron-spo2-chart",
+      innerId: "omron-spo2-inner",
+      label: "酸素飽和度",
+      unit: "%",
+      color: "#1a7f5a",
+      suggestedMin: 92,
+      suggestedMax: 100
+    },
+    omronSpo2Chart
+  );
+
+  omronWeightChart = renderOmronLineChart(
+    omron?.weight,
+    {
+      canvasId: "omron-weight-chart",
+      innerId: "omron-weight-inner",
+      label: "体重",
+      unit: "kg",
+      color: "#2b6cb0"
+    },
+    omronWeightChart
+  );
+
+  omronBpChart = renderOmronBloodPressureChart(omron?.bloodPressure, omronBpChart);
+}
+
+function renderOmronLineChart(series, config, chartRef) {
+  const canvas = document.getElementById(config.canvasId);
+  const inner = document.getElementById(config.innerId);
+  if (!canvas || !inner) return chartRef;
+
+  if (!series?.records?.length) {
+    if (chartRef) chartRef.destroy();
+    return null;
+  }
+
+  const labels = series.records.map((record) => formatDateTime(record._ts));
+  const values = series.records.map((record) => toNumber(record[series.valueKey]));
+
+  setChartWidth(config.innerId, labels.length, OMRON_POINT_WIDTH);
+
+  if (chartRef) chartRef.destroy();
+  return new Chart(canvas, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: config.label,
+          data: values,
+          borderColor: config.color,
+          backgroundColor: `${config.color}33`,
+          tension: 0.3,
+          spanGaps: true,
+          fill: true
+        }
+      ]
+    },
+    options: baseChartOptions({
+      plugins: {
+        tooltip: {
+          callbacks: {
+            label: (context) => {
+              const value = context.parsed.y;
+              if (!Number.isFinite(value)) {
+                return `${config.label}: -`;
+              }
+              return `${config.label}: ${formatValueWithUnit(value, config.unit)}`;
+            }
+          }
+        }
+      },
+      scales: {
+        y: {
+          suggestedMin: config.suggestedMin,
+          suggestedMax: config.suggestedMax,
+          ticks: {
+            callback: (value) => formatValueWithUnit(value, config.unit)
+          }
+        }
+      }
+    })
+  });
+}
+
+function renderOmronBloodPressureChart(series, chartRef) {
+  const canvas = document.getElementById("omron-bp-chart");
+  const inner = document.getElementById("omron-bp-inner");
+  if (!canvas || !inner) return chartRef;
+
+  if (!series?.records?.length) {
+    if (chartRef) chartRef.destroy();
+    return null;
+  }
+
+  const labels = series.records.map((record) => formatDateTime(record._ts));
+  const ranges = [];
+  const meta = [];
+
+  series.records.forEach((record) => {
+    const systolic = toNumber(record["最高血圧(mmHg)"]);
+    const diastolic = toNumber(record["最低血圧(mmHg)"]);
+    if (!Number.isFinite(systolic) || !Number.isFinite(diastolic)) {
+      ranges.push(null);
+      meta.push(null);
+      return;
+    }
+    const low = Math.min(systolic, diastolic);
+    const high = Math.max(systolic, diastolic);
+    ranges.push([low, high]);
+    meta.push({
+      systolic,
+      diastolic,
+      pulse: toNumber(record["脈拍(bpm)"])
+    });
+  });
+
+  setChartWidth("omron-bp-inner", labels.length, OMRON_POINT_WIDTH);
+
+  if (chartRef) chartRef.destroy();
+  return new Chart(canvas, {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "血圧",
+          data: ranges,
+          backgroundColor: "rgba(15, 118, 110, 0.25)",
+          borderColor: "#0f766e",
+          borderWidth: 1,
+          borderRadius: 6,
+          borderSkipped: false
+        }
+      ]
+    },
+    options: baseChartOptions({
+      plugins: {
+        tooltip: {
+          callbacks: {
+            label: (context) => {
+              const item = meta[context.dataIndex];
+              if (!item) return "データなし";
+              const lines = [`血圧: ${item.systolic}/${item.diastolic} mmHg`];
+              if (Number.isFinite(item.pulse)) {
+                lines.push(`脈拍: ${item.pulse.toFixed(0)} bpm`);
+              }
+              return lines;
+            }
+          }
+        }
+      },
+      scales: {
+        y: {
+          ticks: {
+            callback: (value) => `${value} mmHg`
+          }
+        }
+      }
+    })
+  });
 }
 
 function initSelectors(data) {
@@ -556,6 +978,12 @@ function initSelectors(data) {
   const activityPrev = document.getElementById("activity-prev");
   const activityNext = document.getElementById("activity-next");
   const activityModeSelect = document.getElementById("activity-mode");
+  const bodyMetricSelect = document.getElementById("body-metric");
+  const bodyPrev = document.getElementById("body-prev-record");
+  const bodyNext = document.getElementById("body-next-record");
+  const bodyCalendarBtn = document.getElementById("body-calendar");
+  const bodyTrendRangeSelect = document.getElementById("body-trend-range");
+  const bodyTrendFilterSelect = document.getElementById("body-trend-filter");
 
   if (metricSelect && metricSelect.options.length === 0) {
     METRICS.forEach((metric) => {
@@ -588,6 +1016,16 @@ function initSelectors(data) {
     });
   }
 
+  if (bodyMetricSelect && bodyMetricSelect.options.length === 0) {
+    BODY_METRICS.forEach((metric) => {
+      const option = document.createElement("option");
+      option.value = metric.key;
+      option.textContent = metric.label;
+      bodyMetricSelect.appendChild(option);
+    });
+  }
+
+
   [ratingRangeSelect, sleepRangeSelect].forEach((select) => {
     if (!select || select.options.length) return;
     Object.entries(RANGE_CONFIG).forEach(([key, config]) => {
@@ -599,6 +1037,26 @@ function initSelectors(data) {
   });
 
   [ratingFilterSelect, sleepFilterSelect].forEach((select) => {
+    if (!select || select.options.length) return;
+    Object.entries(FILTER_CONFIG).forEach(([key, config]) => {
+      const option = document.createElement("option");
+      option.value = key;
+      option.textContent = config.label;
+      select.appendChild(option);
+    });
+  });
+
+  [bodyTrendRangeSelect].forEach((select) => {
+    if (!select || select.options.length) return;
+    Object.entries(RANGE_CONFIG).forEach(([key, config]) => {
+      const option = document.createElement("option");
+      option.value = key;
+      option.textContent = config.label;
+      select.appendChild(option);
+    });
+  });
+
+  [bodyTrendFilterSelect].forEach((select) => {
     if (!select || select.options.length) return;
     Object.entries(FILTER_CONFIG).forEach(([key, config]) => {
       const option = document.createElement("option");
@@ -681,6 +1139,49 @@ function initSelectors(data) {
       });
     }
 
+    if (bodyMetricSelect) {
+      bodyMetricSelect.addEventListener("change", () => {
+        bodyMetricKey = bodyMetricSelect.value;
+        if (!currentData) return;
+        renderBodyComposition(currentData.bodyComposition);
+      });
+    }
+
+
+    if (bodyTrendRangeSelect) {
+      bodyTrendRangeSelect.addEventListener("change", () => {
+        bodyTrendRangeKey = bodyTrendRangeSelect.value;
+        if (!currentData) return;
+        renderBodyTrend(currentData.bodyComposition);
+      });
+    }
+
+    if (bodyTrendFilterSelect) {
+      bodyTrendFilterSelect.addEventListener("change", () => {
+        bodyTrendFilterKey = bodyTrendFilterSelect.value;
+        if (!currentData) return;
+        renderBodyTrend(currentData.bodyComposition);
+      });
+    }
+
+    if (bodyPrev) {
+      bodyPrev.addEventListener("click", () => {
+        moveBodyRecord(-1);
+      });
+    }
+
+    if (bodyNext) {
+      bodyNext.addEventListener("click", () => {
+        moveBodyRecord(1);
+      });
+    }
+
+    if (bodyCalendarBtn) {
+      bodyCalendarBtn.addEventListener("click", () => {
+        toggleBodyCalendar();
+      });
+    }
+
     if (activityMonthSelect) {
       activityMonthSelect.addEventListener("change", () => {
         currentActivityMonth = activityMonthSelect.value;
@@ -724,6 +1225,15 @@ function initSelectors(data) {
   if (activityModeSelect) {
     activityModeSelect.value = activityMode;
   }
+  if (bodyMetricSelect) {
+    bodyMetricSelect.value = bodyMetricKey;
+  }
+  if (bodyTrendRangeSelect) {
+    bodyTrendRangeSelect.value = bodyTrendRangeKey;
+  }
+  if (bodyTrendFilterSelect) {
+    bodyTrendFilterSelect.value = bodyTrendFilterKey;
+  }
   if (activityMonthSelect) {
     activityMonthSelect.value = currentActivityMonth || "";
   }
@@ -731,6 +1241,9 @@ function initSelectors(data) {
 }
 
 function renderAll(data) {
+  renderBodyComposition(data.bodyComposition);
+  renderBodyTrend(data.bodyComposition);
+  renderOmronSection(data.omron);
   renderHeader(data);
   renderRatingSection(data, currentMetricKey, ratingRangeKey, ratingFilterKey);
   renderSleepSection(data, sleepRangeKey, sleepFilterKey);
@@ -1140,6 +1653,446 @@ function renderActivityLegend() {
   });
 }
 
+function renderBodyComposition(body) {
+  const card = document.getElementById("body-card");
+  const note = document.getElementById("body-note");
+  const latestEl = document.getElementById("body-latest");
+  const prevEl = document.getElementById("body-prev");
+  const recordLabel = document.getElementById("body-record-label");
+
+  if (!card || !note) return;
+
+  if (!body) {
+    latestEl.textContent = "-";
+    prevEl.textContent = "-";
+    note.textContent = "体組成データがありません。";
+    updateBodyLabels([]);
+    renderBodySummary(null);
+    if (recordLabel) recordLabel.textContent = "-";
+    return;
+  }
+
+  if (bodyRecordIndex === null || bodyRecordIndex >= body.records.length) {
+    bodyRecordIndex = body.records.length - 1;
+  }
+  const current = body.records[bodyRecordIndex];
+  const previous = bodyRecordIndex > 0 ? body.records[bodyRecordIndex - 1] : null;
+
+  latestEl.textContent = formatDateSafe(current?._measured) || "-";
+  prevEl.textContent = previous ? formatDateSafe(previous._measured) : "-";
+  if (recordLabel) {
+    recordLabel.textContent = formatDateSafe(current?._measured);
+  }
+
+  const metric = BODY_METRICS.find((item) => item.key === bodyMetricKey) || BODY_METRICS[0];
+  note.textContent = "";
+  updateBodyLabels(buildBodyParts(current, previous, metric));
+  renderBodySummary(current, previous, metric);
+  updateBodyRecordButtons(body);
+}
+
+function updateBodyLabels(parts) {
+  const positions = {
+    "core": document.getElementById("body-core"),
+    "left-arm": document.getElementById("body-left-arm"),
+    "right-arm": document.getElementById("body-right-arm"),
+    "left-leg": document.getElementById("body-left-leg"),
+    "right-leg": document.getElementById("body-right-leg")
+  };
+
+  const layoutParts = BODY_METRICS[0].parts;
+
+  layoutParts.forEach((part) => {
+    const el = positions[part.position];
+    if (!el) return;
+    const data = parts.find((item) => item.position === part.position);
+    if (!data || !Number.isFinite(data.value)) {
+      el.innerHTML = `
+        <div class="label-name">${part.label}</div>
+        <div class="label-value">-</div>
+        <div class="label-delta flat">前回比 -</div>
+      `;
+      return;
+    }
+    const valueText = data.unit ? `${data.value.toFixed(1)}${data.unit}` : `${data.value.toFixed(1)}`;
+    let deltaText = "前回比 -";
+    let deltaClass = "flat";
+    if (data.delta) {
+      if (data.delta.direction === "down") {
+        deltaText = `前回比 ↓ ${data.delta.value.toFixed(1)}%`;
+        deltaClass = "down";
+      } else if (data.delta.direction === "up") {
+        deltaText = `前回比 ↑ ${data.delta.value.toFixed(1)}%`;
+        deltaClass = "up";
+      } else {
+        deltaText = "前回比 ±0.0%";
+        deltaClass = "flat";
+      }
+    }
+    el.innerHTML = `
+      <div class="label-name">${part.label}</div>
+      <div class="label-value">${valueText}</div>
+      <div class="label-delta ${deltaClass}">${deltaText}</div>
+    `;
+  });
+}
+
+function buildBodyParts(current, previous, metric) {
+  if (!current) return [];
+  return metric.parts.map((part) => {
+    const currentValue = toNumber(current[part.key]);
+    const prevValue = previous ? toNumber(previous[part.key]) : null;
+    const delta = computeDelta(currentValue, prevValue);
+    return {
+      ...part,
+      value: currentValue,
+      delta,
+      unit: metric.unit
+    };
+  });
+}
+
+function renderBodySummary(current, previous, metric) {
+  const summary = document.getElementById("body-summary");
+  const note = document.getElementById("body-note");
+  if (!summary) return;
+  summary.innerHTML = "";
+
+  if (!current) {
+    if (note) note.textContent = "体組成データがありません。";
+    return;
+  }
+
+  const weight = toNumber(current["体重"]);
+  const fatMass = toNumber(current["体脂肪量"]);
+  const fatRate = computeFatRate(weight, fatMass);
+  const muscle = toNumber(current["筋肉量"]);
+  const water = toNumber(current["体水分量"]);
+  const bone = toNumber(current["推定骨量"]);
+  const bmr = toNumber(current["基礎代謝量"]);
+  const visceral = toNumber(current["内臓脂肪レベル"]);
+  const athlete = toNumber(current["アスリート指数"]);
+  const bmi = computeBmi(weight, USER_HEIGHT_CM, current["BMI"]);
+
+  const prevWeight = previous ? toNumber(previous["体重"]) : null;
+  const prevFatMass = previous ? toNumber(previous["体脂肪量"]) : null;
+  const prevFatRate = computeFatRate(prevWeight, prevFatMass);
+  const prevMuscle = previous ? toNumber(previous["筋肉量"]) : null;
+  const prevWater = previous ? toNumber(previous["体水分量"]) : null;
+  const prevBone = previous ? toNumber(previous["推定骨量"]) : null;
+  const prevBmr = previous ? toNumber(previous["基礎代謝量"]) : null;
+  const prevVisceral = previous ? toNumber(previous["内臓脂肪レベル"]) : null;
+  const prevAthlete = previous ? toNumber(previous["アスリート指数"]) : null;
+  const prevBmi = computeBmi(prevWeight, USER_HEIGHT_CM, previous ? previous["BMI"] : null);
+
+  const items = [
+    {
+      metricKey: "weight",
+      label: "体重",
+      value: formatValue(weight, "kg"),
+      delta: computeDelta(weight, prevWeight)
+    },
+    {
+      metricKey: "fat_mass",
+      label: "体脂肪量（体脂肪率）",
+      value: formatFatMassRate(fatMass, fatRate),
+      delta: computeDelta(fatMass, prevFatMass) || computeDelta(fatRate, prevFatRate)
+    },
+    {
+      metricKey: "muscle",
+      label: "筋肉量",
+      value: formatValue(muscle, "kg"),
+      delta: computeDelta(muscle, prevMuscle)
+    },
+    {
+      metricKey: "water",
+      label: "体水分量",
+      value: formatValue(water, "kg"),
+      delta: computeDelta(water, prevWater)
+    },
+    {
+      metricKey: "bone",
+      label: "推定骨量",
+      value: formatValue(bone, "kg"),
+      delta: computeDelta(bone, prevBone)
+    },
+    {
+      metricKey: "bmr",
+      label: "基礎代謝量",
+      value: formatValue(bmr, "kcal"),
+      delta: computeDelta(bmr, prevBmr)
+    },
+    {
+      metricKey: "visceral",
+      label: "内臓脂肪レベル",
+      value: formatValue(visceral, ""),
+      delta: computeDelta(visceral, prevVisceral)
+    },
+    {
+      metricKey: "athlete",
+      label: "アスリート指数",
+      value: formatValue(athlete, ""),
+      delta: computeDelta(athlete, prevAthlete)
+    },
+    {
+      metricKey: "bmi",
+      label: "BMI",
+      value: formatValue(bmi, ""),
+      delta: computeDelta(bmi, prevBmi)
+    }
+  ];
+
+  items.forEach((item) => {
+    const card = document.createElement("div");
+    const isActive = bodyTrendMetricKey === item.metricKey;
+    card.className = `body-summary-item${isActive ? " active" : ""}`;
+    const deltaInfo = formatDeltaText(item.delta);
+    card.innerHTML = `
+      <div class="body-summary-label">${item.label}</div>
+      <div class="body-summary-value">${item.value}</div>
+      <div class="body-summary-delta ${deltaInfo.className}">${deltaInfo.text}</div>
+    `;
+    card.addEventListener("click", () => {
+      bodyTrendMetricKey = item.metricKey;
+      if (currentData?.bodyComposition) {
+        renderBodyTrend(currentData.bodyComposition);
+        renderBodyComposition(currentData.bodyComposition);
+      }
+    });
+    summary.appendChild(card);
+  });
+
+  if (note && !USER_HEIGHT_CM) {
+    note.textContent = "BMIは身長未設定のため未表示です。";
+  }
+}
+
+function renderBodyTrend(body) {
+  const canvas = document.getElementById("body-trend-chart");
+  const inner = document.getElementById("body-trend-inner");
+  if (!canvas || !inner) return;
+
+  if (!body?.records?.length) {
+    if (bodyTrendChart) bodyTrendChart.destroy();
+    return;
+  }
+
+  const metric = BODY_TREND_METRICS.find((item) => item.key === bodyTrendMetricKey) || BODY_TREND_METRICS[0];
+  const records = body.records;
+  const values = records.map((record) => getBodyMetricValue(record, metric.key));
+  const filtered = filterRecordsByRange(records, values, bodyTrendFilterKey);
+  const aggregated = aggregateByRange(filtered.records, filtered.values, bodyTrendRangeKey);
+  const range = RANGE_CONFIG[bodyTrendRangeKey] || RANGE_CONFIG.day;
+  const moving = movingAverage(aggregated.values, range.maWindow);
+
+  setChartWidth("body-trend-inner", aggregated.labels.length, range.pointWidth);
+
+  if (bodyTrendChart) bodyTrendChart.destroy();
+  bodyTrendChart = new Chart(canvas, {
+    type: "line",
+    data: {
+      labels: aggregated.labels,
+      datasets: [
+        {
+          label: metric.label,
+          data: aggregated.values,
+          borderColor: "#2b6cb0",
+          backgroundColor: "rgba(43, 108, 176, 0.18)",
+          tension: 0.3,
+          spanGaps: true,
+          fill: true
+        },
+        {
+          label: `${metric.label} ${range.maLabel}`,
+          data: moving,
+          borderColor: getMovingAverageColor("#2b6cb0"),
+          borderDash: [6, 4],
+          tension: 0.3,
+          spanGaps: true
+        }
+      ]
+    },
+    options: baseChartOptions({
+      scales: {
+        y: {
+          ticks: {
+            callback: (value) => formatValueWithUnit(value, metric.unit)
+          }
+        }
+      }
+    })
+  });
+}
+
+function getBodyMetricValue(record, key) {
+  const weight = toNumber(record["体重"]);
+  const fatMass = toNumber(record["体脂肪量"]);
+  switch (key) {
+    case "weight":
+      return weight;
+    case "fat_mass":
+      return fatMass;
+    case "fat_rate":
+      return computeFatRate(weight, fatMass);
+    case "muscle":
+      return toNumber(record["筋肉量"]);
+    case "water":
+      return toNumber(record["体水分量"]);
+    case "bone":
+      return toNumber(record["推定骨量"]);
+    case "bmr":
+      return toNumber(record["基礎代謝量"]);
+    case "visceral":
+      return toNumber(record["内臓脂肪レベル"]);
+    case "athlete":
+      return toNumber(record["アスリート指数"]);
+    case "bmi":
+      return computeBmi(weight, USER_HEIGHT_CM, record["BMI"]);
+    default:
+      return null;
+  }
+}
+
+function formatValueWithUnit(value, unit) {
+  if (!Number.isFinite(value)) return "";
+  if (!unit) return value.toString();
+  return `${value}${unit}`;
+}
+
+function moveBodyRecord(delta) {
+  if (!currentData?.bodyComposition?.records?.length) return;
+  const records = currentData.bodyComposition.records;
+  if (bodyRecordIndex === null) {
+    bodyRecordIndex = records.length - 1;
+  }
+  const nextIndex = bodyRecordIndex + delta;
+  if (nextIndex < 0 || nextIndex >= records.length) return;
+  bodyRecordIndex = nextIndex;
+  renderBodyComposition(currentData.bodyComposition);
+}
+
+function updateBodyRecordButtons(body) {
+  const prev = document.getElementById("body-prev-record");
+  const next = document.getElementById("body-next-record");
+  if (!prev || !next || !body?.records?.length) return;
+  prev.disabled = bodyRecordIndex <= 0;
+  next.disabled = bodyRecordIndex >= body.records.length - 1;
+}
+
+function toggleBodyCalendar() {
+  const panel = document.getElementById("body-calendar-panel");
+  if (!panel || !currentData?.bodyComposition?.records?.length) return;
+  panel.classList.toggle("visible");
+  if (panel.classList.contains("visible")) {
+    renderBodyCalendar(currentData.bodyComposition);
+  }
+}
+
+function renderBodyCalendar(body) {
+  const panel = document.getElementById("body-calendar-panel");
+  if (!panel || !body?.records?.length) return;
+  panel.innerHTML = "";
+
+  const recordsByDate = new Map(
+    body.records.map((record, index) => [formatDateSafe(record._measured), index])
+  );
+
+  const currentRecord = body.records[bodyRecordIndex ?? body.records.length - 1];
+  const baseDate = currentRecord?._measured || body.records[body.records.length - 1]._measured;
+  const year = baseDate.getFullYear();
+  const month = baseDate.getMonth();
+
+  const weekdays = ["月", "火", "水", "木", "金", "土", "日"];
+  weekdays.forEach((label) => {
+    const cell = document.createElement("div");
+    cell.className = "calendar-header";
+    cell.textContent = label;
+    panel.appendChild(cell);
+  });
+
+  const firstDay = new Date(year, month, 1);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const startIndex = (firstDay.getDay() + 6) % 7;
+  const totalCells = Math.ceil((startIndex + daysInMonth) / 7) * 7;
+
+  for (let i = 0; i < totalCells; i += 1) {
+    const cell = document.createElement("div");
+    cell.className = "calendar-cell";
+    if (i < startIndex || i >= startIndex + daysInMonth) {
+      cell.classList.add("empty");
+      panel.appendChild(cell);
+      continue;
+    }
+
+    const day = i - startIndex + 1;
+    const dateKey = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const index = recordsByDate.get(dateKey);
+    const dayEl = document.createElement("div");
+    dayEl.className = "day";
+    dayEl.textContent = day.toString();
+    cell.appendChild(dayEl);
+
+    if (index !== undefined) {
+      cell.classList.add("active");
+      cell.title = "記録あり";
+      if (index === bodyRecordIndex) {
+        cell.classList.add("selected");
+      }
+      cell.addEventListener("click", () => {
+        bodyRecordIndex = index;
+        renderBodyComposition(currentData.bodyComposition);
+        renderBodyCalendar(currentData.bodyComposition);
+        const panel = document.getElementById("body-calendar-panel");
+        if (panel) panel.classList.remove("visible");
+      });
+    } else {
+      cell.classList.add("no-data");
+      cell.title = "記録なし";
+    }
+    panel.appendChild(cell);
+  }
+}
+
+function computeFatRate(weight, fatMass) {
+  if (!Number.isFinite(weight) || !Number.isFinite(fatMass) || weight === 0) return null;
+  return (fatMass / weight) * 100;
+}
+
+function computeBmi(weight, heightCm, bmiFallback) {
+  if (Number.isFinite(heightCm) && Number.isFinite(weight) && heightCm > 0) {
+    const heightM = heightCm / 100;
+    return weight / (heightM * heightM);
+  }
+  const fallback = toNumber(bmiFallback);
+  return Number.isFinite(fallback) ? fallback : null;
+}
+
+function formatValue(value, unit) {
+  if (!Number.isFinite(value)) return "-";
+  const rounded = unit === "%" ? value.toFixed(1) : value.toFixed(1);
+  return unit ? `${rounded}${unit}` : rounded;
+}
+
+function formatFatMassRate(fatMass, fatRate) {
+  if (!Number.isFinite(fatMass) && !Number.isFinite(fatRate)) return "-";
+  const massText = Number.isFinite(fatMass) ? `${fatMass.toFixed(1)}kg` : "-";
+  const rateText = Number.isFinite(fatRate) ? `${fatRate.toFixed(1)}%` : "-";
+  return `${massText} (${rateText})`;
+}
+
+function formatDeltaText(delta) {
+  if (!delta) {
+    return { text: "前回比 -", className: "flat" };
+  }
+  if (delta.direction === "down") {
+    return { text: `前回比 ↓ ${delta.value.toFixed(1)}%`, className: "down" };
+  }
+  if (delta.direction === "up") {
+    return { text: `前回比 ↑ ${delta.value.toFixed(1)}%`, className: "up" };
+  }
+  return { text: "前回比 ±0.0%", className: "flat" };
+}
+
 function getActiveActivities(record) {
   return ACTIVITIES.filter((activity) => parseYesNo(record[activity.key], activity.yes, activity.no) === true);
 }
@@ -1290,9 +2243,44 @@ function setStatus(message) {
   status.textContent = message;
 }
 
-function setLoadingState(isLoading) {
-  const refreshButton = document.getElementById("refresh-button");
-  if (!refreshButton) return;
-  refreshButton.disabled = isLoading;
-  refreshButton.textContent = isLoading ? "更新中..." : "更新";
+function setLoadingState(isLoading, triggerButton = null) {
+  const refreshButtons = document.querySelectorAll("[data-refresh]");
+  refreshButtons.forEach((button) => {
+    const isTrigger = button === triggerButton;
+    button.disabled = isLoading && !isTrigger;
+    button.textContent = "⟳";
+    button.classList.toggle("is-loading", isLoading && isTrigger);
+    if (isTrigger) {
+      button.setAttribute("aria-busy", isLoading ? "true" : "false");
+    } else {
+      button.removeAttribute("aria-busy");
+    }
+  });
+}
+
+function setOmronLoading(isLoading) {
+  const card = document.getElementById("omron-card");
+  const overlays = document.querySelectorAll("#omron-card .chart-loading");
+  if (card) {
+    card.classList.toggle("is-loading", isLoading);
+  }
+  overlays.forEach((overlay) => {
+    overlay.hidden = !isLoading;
+  });
+}
+
+function finalizeOmronFetch(version, omron, error) {
+  if (loadVersion !== version) return;
+  try {
+    if (error) {
+      console.warn("OMRON data fetch timed out or failed", error);
+    } else if (currentData) {
+      currentData.omron = omron;
+    }
+    renderOmronSection(currentData?.omron ?? omron ?? null);
+  } catch (renderError) {
+    console.error("OMRON render failed", renderError);
+  } finally {
+    setOmronLoading(false);
+  }
 }

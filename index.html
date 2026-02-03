@@ -19,21 +19,168 @@
         <p class="lead">Google スプレッドシートの記録を、日次で可視化します。</p>
       </div>
       <div class="meta">
-        <div class="pill">
-          <span class="pill-label">Records</span>
-          <span id="record-count">-</span>
+        <div class="meta-block">
+          <div class="meta-title">フォームの回答 1</div>
+          <div class="pill">
+            <span class="pill-label">Records</span>
+            <span id="record-count-1">-</span>
+          </div>
+          <div class="pill">
+            <span class="pill-label">Range</span>
+            <span id="date-range-1">-</span>
+          </div>
+          <div class="pill">
+            <span class="pill-label">Last Entry</span>
+            <span id="last-entry-1">-</span>
+          </div>
         </div>
-        <div class="pill">
-          <span class="pill-label">Range</span>
-          <span id="date-range">-</span>
+        <div class="meta-block">
+          <div class="meta-title">フォームの回答 2</div>
+          <div class="pill">
+            <span class="pill-label">Records</span>
+            <span id="record-count-2">-</span>
+          </div>
+          <div class="pill">
+            <span class="pill-label">Range</span>
+            <span id="date-range-2">-</span>
+          </div>
+          <div class="pill">
+            <span class="pill-label">Last Entry</span>
+            <span id="last-entry-2">-</span>
+          </div>
         </div>
-        <div class="pill">
-          <span class="pill-label">Last Entry</span>
-          <span id="last-entry">-</span>
-        </div>
-        <button class="action" id="refresh-button" type="button">更新</button>
       </div>
     </header>
+
+    <section class="card body-card" id="body-card">
+      <div class="section-head">
+        <div>
+          <h2>Body Composition</h2>
+          <p class="sub">部位別の体組成スナップショット</p>
+        </div>
+        <div class="body-meta">
+          <span class="pill small"><span class="pill-label">表示中</span> <span id="body-latest">-</span></span>
+          <span class="pill small"><span class="pill-label">前回</span> <span id="body-prev">-</span></span>
+          <button class="icon-btn refresh-btn" data-refresh type="button" aria-label="更新">⟳</button>
+        </div>
+      </div>
+      <div class="body-nav">
+        <button class="icon-btn" id="body-prev-record" type="button"><<</button>
+        <span class="body-nav-label" id="body-record-label">-</span>
+        <button class="icon-btn" id="body-next-record" type="button">>></button>
+        <button class="icon-btn" id="body-calendar" type="button">カレンダー</button>
+      </div>
+      <div class="body-calendar" id="body-calendar-panel"></div>
+      <div class="controls body-controls">
+        <label>
+          指標
+          <select id="body-metric">
+            <option value="fat_rate">体脂肪率</option>
+            <option value="muscle_mass">筋肉量</option>
+          </select>
+        </label>
+      </div>
+      <div class="body-layout">
+        <div class="body-map" id="body-map">
+          <svg class="body-silhouette" viewBox="0 0 200 400" aria-hidden="true">
+            <circle cx="100" cy="38" r="26" />
+            <rect x="70" y="70" width="60" height="120" rx="26" />
+            <rect x="35" y="90" width="30" height="110" rx="14" />
+            <rect x="135" y="90" width="30" height="110" rx="14" />
+            <rect x="72" y="190" width="24" height="160" rx="12" />
+            <rect x="104" y="190" width="24" height="160" rx="12" />
+          </svg>
+          <div class="body-label body-core" id="body-core"></div>
+          <div class="body-label body-left-arm" id="body-left-arm"></div>
+          <div class="body-label body-right-arm" id="body-right-arm"></div>
+          <div class="body-label body-left-leg" id="body-left-leg"></div>
+          <div class="body-label body-right-leg" id="body-right-leg"></div>
+        </div>
+        <div class="body-side">
+          <div class="body-summary" id="body-summary"></div>
+          <div class="body-note" id="body-note">体組成データがありません。</div>
+          <div class="body-trend">
+            <div class="controls">
+              <label>
+                表示単位
+                <select id="body-trend-range"></select>
+              </label>
+              <label>
+                絞り込み
+                <select id="body-trend-filter"></select>
+              </label>
+            </div>
+            <div class="chart-scroll">
+              <div class="chart-card chart-inner" id="body-trend-inner">
+                <canvas id="body-trend-chart"></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="omron-card">
+      <div class="section-head">
+        <div>
+          <h2>OMRON Data</h2>
+          <p class="sub">体温・酸素飽和度・血圧・体重の推移</p>
+        </div>
+        <div class="controls">
+          <button class="icon-btn refresh-btn" data-refresh type="button" aria-label="更新">⟳</button>
+        </div>
+      </div>
+      <div class="omron-grid">
+        <div class="chart-block">
+          <h3>体温</h3>
+          <div class="chart-scroll">
+            <div class="chart-card chart-inner" id="omron-temp-inner">
+              <canvas id="omron-temp-chart"></canvas>
+              <div class="chart-loading" hidden>
+                <span class="loading-spinner" aria-hidden="true"></span>
+                <span>Loading…</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="chart-block">
+          <h3>酸素飽和度</h3>
+          <div class="chart-scroll">
+            <div class="chart-card chart-inner" id="omron-spo2-inner">
+              <canvas id="omron-spo2-chart"></canvas>
+              <div class="chart-loading" hidden>
+                <span class="loading-spinner" aria-hidden="true"></span>
+                <span>Loading…</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="chart-block">
+          <h3>血圧 (最高 / 最低)</h3>
+          <div class="chart-scroll">
+            <div class="chart-card chart-inner" id="omron-bp-inner">
+              <canvas id="omron-bp-chart"></canvas>
+              <div class="chart-loading" hidden>
+                <span class="loading-spinner" aria-hidden="true"></span>
+                <span>Loading…</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="chart-block">
+          <h3>体重</h3>
+          <div class="chart-scroll">
+            <div class="chart-card chart-inner" id="omron-weight-inner">
+              <canvas id="omron-weight-chart"></canvas>
+              <div class="chart-loading" hidden>
+                <span class="loading-spinner" aria-hidden="true"></span>
+                <span>Loading…</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <section class="card">
       <div class="section-head">
@@ -54,6 +201,7 @@
             絞り込み
             <select id="rating-filter"></select>
           </label>
+          <button class="icon-btn refresh-btn" data-refresh type="button" aria-label="更新">⟳</button>
         </div>
       </div>
       <div class="stats-grid" id="rating-stats"></div>
@@ -65,22 +213,23 @@
     </section>
 
     <section class="card">
-      <div class="section-head">
-        <div>
-          <h2>Sleep Duration</h2>
-          <p class="sub">入眠時間と起床時間から算出した睡眠時間</p>
+        <div class="section-head">
+          <div>
+            <h2>Sleep Duration</h2>
+            <p class="sub">入眠時間と起床時間から算出した睡眠時間</p>
+          </div>
+          <div class="controls">
+            <label>
+              表示単位
+              <select id="sleep-range"></select>
+            </label>
+            <label>
+              絞り込み
+              <select id="sleep-filter"></select>
+            </label>
+            <button class="icon-btn refresh-btn" data-refresh type="button" aria-label="更新">⟳</button>
+          </div>
         </div>
-        <div class="controls">
-          <label>
-            表示単位
-            <select id="sleep-range"></select>
-          </label>
-          <label>
-            絞り込み
-            <select id="sleep-filter"></select>
-          </label>
-        </div>
-      </div>
       <div class="stats-grid" id="sleep-stats"></div>
       <div class="chart-scroll">
         <div class="chart-card chart-inner" id="sleep-inner">
@@ -90,11 +239,11 @@
     </section>
 
     <section class="card">
-      <div class="section-head">
-        <div>
-          <h2>Activity Calendar</h2>
-          <p class="sub">選択したアクティビティがあった日をカレンダーで表示</p>
-        </div>
+        <div class="section-head">
+          <div>
+            <h2>Activity Calendar</h2>
+            <p class="sub">選択したアクティビティがあった日をカレンダーで表示</p>
+          </div>
           <div class="controls">
             <label>
               アクティビティ
@@ -109,11 +258,12 @@
               <div class="month-controls">
                 <button class="icon-btn" id="activity-prev" type="button"><<</button>
                 <select id="activity-month"></select>
-              <button class="icon-btn" id="activity-next" type="button">>></button>
-            </div>
-          </label>
+                <button class="icon-btn" id="activity-next" type="button">>></button>
+              </div>
+            </label>
+            <button class="icon-btn refresh-btn" data-refresh type="button" aria-label="更新">⟳</button>
+          </div>
         </div>
-      </div>
       <div class="stats-grid" id="activity-stats"></div>
       <div class="legend" id="activity-legend"></div>
       <div class="calendar" id="activity-calendar"></div>
@@ -125,6 +275,9 @@
         <div>
           <h2>Body Symptoms</h2>
           <p class="sub">体の不調で多いワード（トップ10）</p>
+        </div>
+        <div class="controls">
+          <button class="icon-btn refresh-btn" data-refresh type="button" aria-label="更新">⟳</button>
         </div>
       </div>
       <div class="stats-grid" id="symptom-stats"></div>
